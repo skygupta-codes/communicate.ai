@@ -1,264 +1,542 @@
-# plan.md — Antigravity Agentic Workflow: Google Sheets → Telegram + WhatsApp Alerts
-
-## 0) Prime Directive (Hard Rules)
-1. The workflow MUST follow ONLY what is written in this file. If a detail is missing, the workflow must choose the simplest safe default described in this file (see “Default Decisions”).
-2. No feature creep. Build exactly the minimum to: detect a new row in a Google Sheet and notify Telegram + WhatsApp.
-3. No “magic.” Every credential, endpoint, and trigger must be explicit, testable, and logged (without leaking secrets).
-4. Security first: secrets never committed; use environment variables only.
+# Project Brain — Meta Lead → Email + WhatsApp → Agentic Booking (Antigravity IDE)
+Version: 1.0  
+Owner: Moments to Frames Studio (Barrhaven, Ottawa)  
+Timezone: America/Toronto  
+Primary Goal: Convert Meta leads into booked sessions with **zero human intervention** (except edge cases).
 
 ---
 
-## 1) Goal
-Create an app in **Antigravity IDE** that:
-- Detects when a **new row is added** to a specific **Google Sheet**.
-- Sends a **Telegram message** to a configured chat.
-- Sends a **WhatsApp message** to a configured number.
+## 1) Mission
+Build an event-driven, agentic automation that:
+1) detects new Meta leads,
+2) sends an immediate email + WhatsApp outreach (when phone exists),
+3) runs a two-way conversation on both channels,
+4) books the client into a calendar slot + sends confirmation,
+5) executes a follow-up cadence if the lead is idle,
+6) never spams, never violates opt-out, and never double-messages due to webhook retries.
 
-**Definition of “row added”:**
-- A new, non-empty row appears after the last processed row.
-- The app must process each row exactly once (idempotent delivery).
-
----
-
-## 2) Non-Goals
-- No UI/dashboard (unless Antigravity requires a minimal config screen; otherwise CLI/service only).
-- No complex transformations, analytics, or multi-sheet routing.
-- No attachments/media—text messages only.
-- No enterprise auth flows beyond what’s required to access Google Sheets.
+Success is measured by **booking conversion rate**, **time-to-first-response**, and **manual intervention rate**.
 
 ---
 
-## 3) Architecture (Simple, Reliable)
-### 3.1 Components
-1. **Row Detector**
-   - Reads the sheet at a fixed interval (polling) OR uses a push trigger (Apps Script).
-2. **State Store**
-   - Persists the last processed row index (or unique row ID) locally.
-3. **Notifier**
-   - Telegram sender
-   - WhatsApp sender
-4. **Logger**
-   - Structured logs with correlation IDs and status.
+## 2) Business Context (MTF Studio Defaults)
+Studio: Moments to Frames Studio  
+Location: 3 Stoneleigh Street, Barrhaven, Ottawa  
+Offerings:
+- Maternity Sessions: $300 CAD, 1 hour, studio, maternity wardrobe included, partner/children allowed, 10 edited photos included, extra edits $5/image
+- Family Portraits: Same base package structure but valid for 5 people; +$25/person beyond 5; wardrobe not included; provide consult for outfit guidance
+Delivery timeline:
+- Next-day online selection gallery (non-downloadable, no RAWs)
+- Editing: 5–7 days after selection
+- Final downloadable gallery full-res
 
-### 3.2 Default Decisions (Use these unless you explicitly switch)
-- **Default trigger method:** Polling every 30 seconds.
-- **Default state store:** Local file `state.json` (or Antigravity key-value store if available).
-- **Default WhatsApp provider:** Twilio WhatsApp (fastest to implement) OR Meta WhatsApp Cloud API if Twilio not allowed.
-- **Default Google auth:** Google Service Account + shared sheet access (simplest for server-side).
+**This information must be used by the Conversation Agent when answering pricing/package questions.**
 
 ---
 
-## 4) Required Inputs (All via Environment Variables)
-### 4.1 Google Sheets
-- `GOOGLE_SHEET_ID` — Spreadsheet ID
-- `GOOGLE_SHEET_TAB` — Tab name (e.g., `Leads`)
-- `GOOGLE_SHEET_RANGE` — Range to read (e.g., `A:Z`)
-- `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` — base64-encoded service account JSON
+## 3) Scope
+### In Scope
+- Meta Lead Ads ingestion via webhook + Graph API fetch
+- Dedupe + idempotent processing
+- Automated outbound:
+  - Email (transactional provider)
+  - WhatsApp Business Platform (Cloud API) outbound template + session messaging
+- Inbound handling:
+  - Email replies
+  - WhatsApp replies
+- Conversation agent to qualify + move to booking
+- Booking agent to propose times + confirm + create calendar event
+- Automated follow-up cadence (up to 3 touches)
+- Opt-out compliance across channels
+- Audit logs and metrics
 
-### 4.2 Telegram
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID` (personal chat or group)
-
-### 4.3 WhatsApp (Choose ONE provider path)
-#### Option A: Twilio WhatsApp
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_WHATSAPP_FROM` (format: `whatsapp:+14155238886` or your approved sender)
-- `WHATSAPP_TO` (format: `whatsapp:+1XXXXXXXXXX`)
-
-#### Option B: Meta WhatsApp Cloud API
-- `META_WHATSAPP_TOKEN`
-- `META_WHATSAPP_PHONE_NUMBER_ID`
-- `WHATSAPP_TO_E164` (format: `+1XXXXXXXXXX`)
-
-### 4.4 App Runtime
-- `POLL_INTERVAL_SECONDS` (default 30)
-- `STATE_PATH` (default `./state.json`)
-- `LOG_LEVEL` (default `INFO`)
+### Out of Scope (Phase 1)
+- Full CRM integration (HubSpot/Salesforce) (optional Phase 2)
+- Payments capture automation (deposit links allowed; auto reconciliation later)
+- Multi-language (English-only Phase 1)
+- Human handoff UI (only minimal “needs_manual” queue)
 
 ---
 
-## 5) Message Format (Deterministic)
-When a new row is detected:
-- Build a message string using:
-  - Sheet name
-  - Row index
-  - Timestamp
-  - Key columns (first 5 columns by default)
+## 4) Non-Negotiables (Reliability + Compliance)
+### Webhook Reality
+- Meta/Email/WhatsApp webhooks can retry and duplicate.
+- The system must be **idempotent**:
+  - Meta lead uniqueness key = `leadgen_id`
+  - Store and reject duplicates on ingest.
+- Every outbound message must have a **cooldown guard** to prevent double-sends.
 
-**Default message template:**
-`[New Row] Sheet={TAB} Row={ROW_INDEX} Time={ISO8601}\nData={COL1} | {COL2} | {COL3} | {COL4} | {COL5}`
+### WhatsApp Rules
+- First outbound message should use an **approved template** (unless within 24-hour window triggered by user message).
+- If user replies, we have a **24-hour service window** for free-form messages.
+- Outside the 24-hour window: templates only.
 
-If fewer than 5 columns exist, include what exists.
-If columns are empty, show empty placeholders (do not skip).
+### Email Rules
+- Include identity + opt-out instruction in footer.
+- If user opts out, suppress all future messages.
 
----
-
-## 6) Idempotency & State
-### 6.1 State Model
-State must store:
-- `last_processed_row_index` (integer)
-- `last_run_time` (ISO8601)
-- optional: `sheet_fingerprint` (sheet ID + tab)
-
-### 6.2 Idempotency Rule
-- Only process rows with index > `last_processed_row_index`.
-- After successful sends to BOTH Telegram and WhatsApp, advance state.
-- If Telegram succeeds and WhatsApp fails (or vice versa), do NOT advance state.
-- Retries will resend. This is acceptable; correctness > convenience.
-  - (If you want “no duplicates,” you must implement per-row delivery flags. Not in scope by default.)
+### Hard Stop
+If a lead is in `OPT_OUT`, do not send anything. No exceptions.
 
 ---
 
-## 7) Trigger Strategy
-### 7.1 Polling (Default)
-Loop:
-1. Read sheet values (range).
-2. Compute “last non-empty row index” (based on any non-empty cell in the row).
-3. For each new row, in ascending order:
-   - Send Telegram
-   - Send WhatsApp
-   - Persist updated state
+## 5) High-Level Architecture
+Event-driven pipeline with agentic orchestration and state management.
 
-**Polling must:**
-- Sleep `POLL_INTERVAL_SECONDS` after each loop.
-- Handle rate limits with backoff (see Error Handling).
-
-### 7.2 Alternative: Apps Script Push Trigger (Only if polling is blocked)
-- Use a Google Apps Script `onChange` trigger to POST to the app webhook.
-- The app receives the payload and then reads the sheet to fetch the new row(s).
-- This still requires idempotency state on the app side.
-
----
-
-## 8) Error Handling (No Drama, Just Discipline)
-### 8.1 General
-- All external calls must have timeouts.
-- Use exponential backoff for retryable errors (HTTP 429, 5xx, network).
-- Max retries: 3 attempts per channel per row.
-
-### 8.2 Logging
-Every row attempt logs:
-- correlation_id (e.g., `{sheet_id}-{tab}-{row_index}-{timestamp}`)
-- channel (`telegram` / `whatsapp`)
-- status (`success` / `failed`)
-- error summary (never include tokens)
-
-### 8.3 Fail-Safe
-If state file is missing:
-- Initialize `last_processed_row_index = 1` (or the header row index).  
-**Default assumption:** Row 1 is header, start at row 2.
-
-If sheet is empty:
-- Do nothing.
+### Components
+1) **Webhook Gateway**
+   - Endpoints: Meta leadgen, WhatsApp inbound, Email inbound
+   - Signature verification (Meta / provider-specific)
+2) **Core Orchestrator (State Machine)**
+   - Owns lead lifecycle: NEW → CONTACTED → ENGAGED → BOOKED/CLOSED/OPT_OUT
+3) **Agents**
+   - Lead Qualifier Agent
+   - Conversation Agent
+   - Booking Agent
+   - Follow-up Agent
+   - Compliance Guard Agent
+4) **Data Store**
+   - Lead table
+   - Message log table
+   - Job schedule table
+5) **Messaging Integrations**
+   - Email provider (SendGrid recommended for inbound parsing)
+   - WhatsApp Business Platform Cloud API
+6) **Calendar Integration**
+   - Google Calendar availability + event creation
+7) **Scheduler/Queue**
+   - Runs follow-up jobs and delayed actions
 
 ---
 
-## 9) Development Workflow (Agentic, Strict Roles)
-The agentic workflow in Antigravity MUST run these roles in order and must not skip steps.
+## 6) Data Model (Must Implement Exactly)
+### 6.1 Lead Table: `leads`
+Required fields:
+- `lead_id` (string, primary key) — Meta `leadgen_id`
+- `source` (string) — "meta"
+- `created_at` (datetime)
+- `name` (string|null)
+- `email` (string|null)
+- `phone` (string|null, E.164 if possible)
+- `session_type` (enum|null) — maternity | family | portrait | unknown
+- `timeline` (enum|null) — within_month | one_to_two_months | two_plus_months | unknown
+- `consent_email` (bool) default true if captured in form; else false
+- `consent_whatsapp` (bool) default true if captured; else false
+- `status` (enum) — NEW | CONTACTED | ENGAGED | BOOKED | CLOSED | OPT_OUT | NEEDS_MANUAL
+- `email_thread_id` (string|null)
+- `whatsapp_conversation_id` (string|null)
+- `last_contact_at` (datetime|null)
+- `last_reply_at` (datetime|null)
+- `followup_stage` (int) default 0
+- `next_followup_at` (datetime|null)
+- `cooldown_until` (datetime|null) — global anti-spam guard
+- `notes` (json|null) — extracted details (preferences, family size, etc.)
 
-### Role A — Planner Agent
-Deliverables:
-- Confirm which WhatsApp provider path is used (Twilio default).
-- Confirm the expected sheet structure: header row on row 1.
-- Produce a minimal module breakdown (see Section 10).
+### 6.2 Message Log Table: `message_log`
+- `id` (uuid, pk)
+- `lead_id` (fk)
+- `channel` (enum) — email | whatsapp
+- `direction` (enum) — outbound | inbound
+- `timestamp` (datetime)
+- `content` (text, store sanitized; no secrets)
+- `provider_ref` (string|null) — message id from provider
+- `intent_tag` (string|null) — booking_intent | pricing | schedule | objection | opt_out | etc.
+
+### 6.3 Job Table: `jobs`
+- `id` (uuid)
+- `job_name` (string) — followup_check | delayed_send | etc.
+- `lead_id` (fk)
+- `run_at` (datetime)
+- `payload` (json)
+- `status` (enum) — queued | running | done | failed
+- `attempts` (int)
+
+---
+
+## 7) State Machine (Canonical)
+### 7.1 States
+- `NEW`: lead ingested, not contacted yet
+- `CONTACTED`: first outreach sent
+- `ENGAGED`: inbound reply received OR lead actively conversing
+- `BOOKED`: appointment confirmed + calendar event created
+- `CLOSED`: not interested / out of scope / no response after cadence
+- `OPT_OUT`: user requested stop/unsubscribe
+- `NEEDS_MANUAL`: missing contact info, repeated failures, ambiguous
+
+### 7.2 Transitions
+- NEW → CONTACTED: after successful first outreach
+- CONTACTED → ENGAGED: on inbound reply (email or WhatsApp)
+- ENGAGED → BOOKED: after booking confirmed + calendar event created
+- ENGAGED → CLOSED: “not interested”, “already booked elsewhere”, out of region, etc.
+- Any → OPT_OUT: on opt-out keywords or explicit request
+- CONTACTED → CLOSED: after follow-up stage 3 with no response
+- Any → NEEDS_MANUAL: repeated errors (>=3) or no channels available
+
+---
+
+## 8) Event Flows (Required)
+### 8.1 Meta Lead Ingestion
+Trigger: `webhook.meta.leadgen`
+Steps:
+1) Verify signature
+2) Extract `leadgen_id`
+3) If `lead_id` exists in `leads`, exit (idempotency)
+4) Fetch lead fields from Meta Graph API
+5) Normalize phone/email
+6) Infer `session_type` and `timeline` from form fields if present
+7) Save lead with status NEW
+8) Emit internal event `lead.created`
+
+### 8.2 First Contact (Parallel)
+Trigger: `lead.created`
 Rules:
-- No implementation yet.
+- If `email` exists AND `consent_email=true` → send email
+- If `phone` exists AND `consent_whatsapp=true` → send WhatsApp template
+- If neither exists → status NEEDS_MANUAL
+- Set status CONTACTED
+- Set `last_contact_at=now`
+- Schedule follow-up job `followup_check` at T+2h (local)
 
-### Role B — Implementer Agent
-Deliverables:
-- Create modules exactly as specified.
-- Wire environment variables.
-- Implement polling loop + state store + two notifiers.
+### 8.3 Inbound Routing
+Trigger:
+- `webhook.email.inbound`
+- `webhook.whatsapp.inbound`
+Steps:
+1) Identify lead by:
+   - email thread id / In-Reply-To headers, or
+   - email address / phone number match
+2) Log inbound message
+3) If opt-out detected → set OPT_OUT and send one confirmation (if allowed)
+4) Else set status ENGAGED and `last_reply_at=now`
+5) Pass message + lead context to **Conversation Agent**
+6) Send agent reply on same channel
+7) If agent tags booking intent → invoke **Booking Agent**
+
+### 8.4 Follow-up Cadence
+Trigger: `followup_check(lead_id)`
 Rules:
-- No extra features (no UI, no database, no caching).
+- If status in BOOKED/CLOSED/OPT_OUT → stop
+- If `last_reply_at` exists and is after last_contact → stop (engaged)
+- Else progress `followup_stage += 1` and send follow-up (email + WhatsApp template if required)
+- Follow-up schedule:
+  - Stage 1: +2 hours from first outreach
+  - Stage 2: +24 hours
+  - Stage 3: +72 hours
+- After Stage 3 with no response → set status CLOSED (`closed_no_response`)
+- Every follow-up must include opt-out instruction
 
-### Role C — Reviewer Agent
-Deliverables:
-- Validate idempotency logic and state updates.
-- Validate secrets handling (no secrets in code).
-- Validate message formatting is deterministic.
+---
+
+## 9) Agent Specifications (Exact Responsibilities)
+### 9.1 Compliance Guard Agent (Runs Before Any Outbound)
+Inputs: lead, message, channel, time-window  
+Outputs: allow/deny + redactions + reason
 Rules:
-- Must propose concrete fixes, not vague advice.
+- If lead.status=OPT_OUT → deny
+- If cooldown active (`now < cooldown_until`) → deny
+- Enforce WhatsApp template requirement when outside 24h window
+- Detect and act on opt-out keywords: "stop", "unsubscribe", "don’t contact", "do not contact"
+- Never request sensitive info (SIN, health, etc.)
 
-### Role D — Tester Agent
-Deliverables:
-- Unit tests for:
-  - state load/save
-  - new-row detection logic
-  - message formatting
-- “Integration test checklist” (manual):
-  - Add one row → receive both messages
-  - Add 3 rows quickly → receive 3 pairs in order
-  - Force WhatsApp failure → no state advance
-Rules:
-- If tests fail, loop back to Implementer.
+### 9.2 Lead Qualifier Agent
+Goal: Extract missing booking-critical details with minimal questions.
+Outputs fields:
+- session_type
+- timeline
+- preferred dates range
+- studio vs outdoor
+- for family: family_size
+- any special requests
 
-### Role E — Release Agent
-Deliverables:
-- Runbook for local execution
-- Minimal deployment guidance (if needed)
-Rules:
-- Keep it minimal and reproducible.
+### 9.3 Conversation Agent (Core Sales + Service)
+Goal: Move lead to booking with minimal friction.
+Hard rules:
+- WhatsApp messages <= 120 words
+- Ask max 2 questions per message
+- Always include a clear CTA: propose times or ask for date range
+- If pricing asked: respond with package details (Section 2) + CTA
+- If timeline is 2+ months: still book a tentative slot or offer calendar hold
+- Always remain warm, professional, Ottawa-local tone
+- If out of scope or non-local: politely close and set CLOSED
 
----
+Must tag intent:
+- booking_intent
+- pricing
+- availability_request
+- objection
+- opt_out
+- not_interested
 
-## 10) Module Breakdown (Implement Exactly This)
-1. `config`
-   - Loads env vars, validates required fields.
-2. `state_store`
-   - Reads/writes `state.json`.
-3. `sheets_client`
-   - Auth + read range + parse rows.
-4. `row_detector`
-   - Computes new rows > last_processed_row_index.
-5. `telegram_notifier`
-   - Sends text message.
-6. `whatsapp_notifier`
-   - Sends text message using chosen provider.
-7. `app`
-   - Main loop, orchestrates everything.
+### 9.4 Booking Agent
+Inputs: lead context + extracted preferences  
+Steps:
+1) Determine session duration default = 60 minutes
+2) Call calendar availability within next 14–60 days based on timeline
+3) Propose 3 slots in America/Toronto
+4) Confirm slot on reply
+5) Create calendar event:
+   - Title: “MTF {SessionType} Session — {ClientName}”
+   - Location: “3 Stoneleigh Street, Barrhaven, Ottawa”
+6) Send confirmation email + WhatsApp message
+7) Set status BOOKED
 
----
+Failure handling:
+- If slot taken: apologize + propose new options
+- If calendar API fails: set NEEDS_MANUAL after 3 attempts
 
-## 11) Acceptance Criteria (Binary Pass/Fail)
-Pass only if ALL are true:
-1. New row triggers BOTH Telegram + WhatsApp notifications.
-2. Same row is not reprocessed after successful dual-send.
-3. If either channel fails, the row is retried on the next cycle.
-4. Secrets are only in environment variables.
-5. Logs show per-row status with correlation IDs.
-6. App survives restarts without losing progress (state persists).
-
----
-
-## 12) Implementation Notes (Practical Defaults)
-- Google Sheet access:
-  - Share the sheet with the service account email.
-- Telegram:
-  - Bot created via BotFather; chat id known.
-- WhatsApp:
-  - Twilio sandbox is acceptable for dev; production requires approved sender.
-- Keep polling interval >= 15 seconds to reduce API rate risk.
+### 9.5 Follow-up Agent
+Generates follow-up messages aligned to stage:
+- Stage 1: quick check + 2 slots
+- Stage 2: add value (prep/what-to-wear guide) + link/slots
+- Stage 3: scarcity-light (“I can hold a spot for 24h”) + opt-out
 
 ---
 
-## 13) What to Do First (Execution Order)
-1. Create Telegram bot + capture `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-2. Choose WhatsApp provider:
-   - Twilio (default) and collect credentials.
-3. Create Google service account:
-   - Share sheet with service account email.
-   - Base64-encode JSON into `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`.
-4. In Antigravity IDE:
-   - Initialize project
-   - Implement modules Section 10
-   - Run locally with a `.env` file (never commit it)
-5. Verify via acceptance criteria.
+## 10) Messaging Templates (Seed Copy)
+### 10.1 WhatsApp Approved Template (First Touch)
+Template name: `lead_welcome_booking`
+Params: {1=Name, 2=SessionType}
+
+Body:
+"Hi {{1}} 👋 It’s Moments to Frames Studio in Barrhaven. Thanks for reaching out about a {{2}} session.  
+To get you booked, reply with:  
+1) your ideal date range, and  
+2) studio or outdoor."
+
+### 10.2 Email First Touch
+Subject:
+"Next steps for your {session_type} session in Barrhaven"
+
+Body must include:
+- short thank you
+- 2 key questions (date range + studio/outdoor)
+- package headline + starting price (if session_type known)
+- opt-out line in footer
+
+Email footer (mandatory):
+"Moments to Frames Studio — Barrhaven, Ottawa.  
+Reply STOP to opt out of messages."
+
+### 10.3 Follow-up Email/WA
+All follow-ups must:
+- be short
+- include value + CTA
+- include opt-out instruction
 
 ---
 
-## 14) Strict Change Control
-If any new requirement appears (filters, multiple sheets, formatting rules, routing, attachments):
-- Do NOT implement it.
-- Add it as a “Future Enhancements” bullet in a separate file, not in this build.
+## 11) Integrations (Implementation Requirements)
+### 11.1 Meta Graph API
+- Store tokens securely (secrets manager)
+- Fetch lead fields using `leadgen_id`
+- Map Meta fields to Lead table
+
+### 11.2 WhatsApp Cloud API
+- Configure webhook verification
+- Store phone numbers in E.164
+- Template submission + approval (manual setup step)
+- Track `whatsapp_conversation_id` and last inbound timestamp to enforce 24h rule
+
+### 11.3 Email Provider
+Recommended: SendGrid
+- Outbound API
+- Inbound parse webhook to capture replies
+- Threading using Message-ID / In-Reply-To
+
+### 11.4 Google Calendar
+- Read availability windows
+- Create events
+- Avoid double-bookings via re-check just before creation
+
+### 11.5 Payments (Optional Phase 1)
+- Stripe payment link generator
+- Only send when lead requests or after booking confirmation
+
+---
+
+## 12) Antigravity Tooling (Functions to Implement)
+All tools must return structured JSON, and every tool must log failures.
+
+### 12.1 Data Tools
+- `db.upsert_lead(lead)`
+- `db.get_lead_by_id(lead_id)`
+- `db.find_lead_by_contact(email, phone)`
+- `db.log_message(entry)`
+- `db.set_status(lead_id, status)`
+- `db.increment_followup_stage(lead_id)`
+
+### 12.2 Meta Tools
+- `meta.verify_signature(headers, body)`
+- `meta.fetch_lead(leadgen_id)`
+
+### 12.3 WhatsApp Tools
+- `wa.send_template(phone, template_name, params)`
+- `wa.send_message(phone, text)`
+- `wa.parse_inbound(payload)` → {phone, text, msg_id, timestamp}
+
+### 12.4 Email Tools
+- `email.send(to, subject, body_html, thread_ref?)`
+- `email.parse_inbound(payload)` → {from, subject, body_text, thread_id, timestamp}
+
+### 12.5 Calendar Tools
+- `calendar.get_availability(start, end, duration_minutes)`
+- `calendar.create_event(title, start, end, location, description, attendee_email?)`
+
+### 12.6 Scheduler Tools
+- `scheduler.enqueue(job_name, run_at, payload)`
+- `scheduler.cancel_jobs(lead_id, job_name?)`
+
+### 12.7 Policy Tool
+- `policy.check(lead, channel, message, now)` → allow/deny + edits
+
+---
+
+## 13) Workflow Definitions (Antigravity)
+### Workflow A: `MetaLeadIntake`
+Trigger: `webhook.meta.leadgen`
+1) Verify
+2) Deduplicate by `leadgen_id`
+3) Fetch lead
+4) Normalize + store in DB
+5) Emit `lead.created`
+
+### Workflow B: `LeadFirstContact`
+Trigger: `lead.created`
+1) Run policy check per channel
+2) Send WhatsApp template if allowed
+3) Send email if allowed
+4) Update status CONTACTED
+5) Schedule followup_check in 2 hours
+
+### Workflow C: `InboundMessageRouter`
+Trigger: `webhook.whatsapp.inbound` OR `webhook.email.inbound`
+1) Parse inbound
+2) Match lead
+3) Log inbound
+4) Opt-out check → OPT_OUT + cancel scheduled followups
+5) Set ENGAGED
+6) Conversation Agent generates reply + intent tag
+7) Policy check + send reply
+8) If booking intent → invoke Booking Agent
+
+### Workflow D: `FollowupCadence`
+Trigger: `job.followup_check`
+1) Load lead
+2) Stop conditions (BOOKED/CLOSED/OPT_OUT/ENGAGED)
+3) Increment stage
+4) Generate follow-up via Follow-up Agent
+5) Policy check + send
+6) Schedule next stage or close lead
+
+### Workflow E: `BookingFlow`
+Trigger: `intent.booking_intent`
+1) Ensure we have minimum fields
+2) Calendar availability
+3) Send 3 slot options
+4) On user confirmation, create event
+5) Send confirmation + prep info
+6) Set BOOKED + cancel followup jobs
+
+---
+
+## 14) Error Handling & Retries
+### Retry Policy
+- For external API failures: exponential backoff, max 3 attempts
+- After 3 failures:
+  - set lead to NEEDS_MANUAL
+  - log error with context
+
+### Dead-letter Strategy
+- Failed jobs stored with payload + error
+- A manual replay mechanism exists (Phase 2)
+
+---
+
+## 15) Observability (Required Metrics)
+Track:
+- Leads ingested/day
+- Time-to-first-contact (p50/p95)
+- Reply rate by channel
+- Booking conversion rate
+- Manual intervention rate
+- Follow-up stage distribution
+- Opt-out rate
+- Duplicate webhook events blocked
+
+Logs must include:
+- lead_id
+- channel
+- message ids
+- tool call success/failure
+
+---
+
+## 16) Test Plan (Must Pass Before Launch)
+### Unit Tests
+- Deduplication on Meta webhook retries
+- Phone/email normalization
+- Opt-out detection across languages/variants
+- WhatsApp 24-hour window enforcement
+
+### Integration Tests (Sandbox)
+- Meta lead fetch works end-to-end
+- WhatsApp template send success
+- Email send + inbound reply parsing
+- Calendar availability + create event
+
+### Scenario Tests
+1) Lead has phone+email → gets both messages → replies on WhatsApp → books
+2) Lead has email only → email convo → books
+3) Lead never replies → follow-ups trigger stage 1–3 → lead closes
+4) Lead says STOP → OPT_OUT + suppress forever
+5) Calendar conflict mid-booking → re-offer slots
+
+---
+
+## 17) Deployment Checklist
+- Meta webhook live + verified
+- WhatsApp Cloud API configured + template approved
+- Email inbound parse webhook configured
+- Secrets stored in secure vault
+- Database migrations applied
+- Scheduler enabled
+- Monitoring dashboard live
+- Rate limits configured (per channel) to avoid provider bans
+
+---
+
+## 18) Operating Rules (Production Guardrails)
+- Never send more than:
+  - 1 initial outreach per channel
+  - 3 follow-ups total
+- Respect quiet hours (optional but recommended):
+  - Do not send between 9pm–8am America/Toronto unless user initiated within last hour
+- If lead replies on one channel, pause follow-ups on both channels
+- If lead is booked, stop all future follow-ups immediately
+
+---
+
+## 19) Phase Roadmap
+### Phase 1 (MVP)
+- Meta ingestion + email + WhatsApp + basic booking + follow-ups
+- Google Calendar integration
+- Basic metrics
+
+### Phase 2
+- CRM sync
+- Payment automation + deposit collection tracking
+- A/B testing of scripts
+- Human handoff UI
+
+---
+
+## 20) Definition of Done
+Project is “done” when:
+- 95%+ of leads receive first contact within 2 minutes
+- Duplicate webhooks never cause duplicate messages
+- 0 policy violations (opt-out respected, WhatsApp templates used correctly)
+- Bookings can be created end-to-end without human intervention
+- Follow-up cadence runs reliably and stops on engagement/booking/opt-out
+
+---
+END OF PROJECT BRAIN
